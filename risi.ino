@@ -19,7 +19,7 @@ volatile int samplesRead;
 bool triggered = false;
 
 // Constants:
-const int THR = 28000; // thresholf for gunfire detection(out of max 32767)
+const int THR = 1000; //32000; // threshold for gunfire detection(out of max 32767)
 const int SAMPLE_RATE = 16000;
 const int PRE_TRIGGER_MS = 50;
 const int POST_TRIGGER_MS = 150;
@@ -59,12 +59,13 @@ void loop() {
 
   for (int i = 0; i < samplesRead; i++) {
     const int sample = sampleBuffer[i];
+    //Serial.println(sample);
     
     if(!triggered){
       // Check if read sample reached the threshold
       if (sample >= THR) {
         Serial.println(sample);
-        Serial.println("Threshold reached!");
+        Serial.println("Sound level reached threshold");
         triggered = true;
 
         ringBuffer[ringHead] = sample;
@@ -90,7 +91,7 @@ void loop() {
       // buffer full — you have your 200ms clip
       if (postTriggerCount >= TOTAL_SAMPLES - PRE_SAMPLES) {
         triggered = false;
-        classifySound(); // your classification function goes here
+        classifySound();
       }
 
     }
@@ -112,5 +113,14 @@ void onPDMdata() {
 }
 
 void classifySound() {
-  // Classify buffered sound
+  // TODO: Put classification function here
+  Serial.println("Sample gathering finished, activated classification (unimplemented)");
+
+  for (int i = 0; i < TOTAL_SAMPLES; i++) {
+    Serial.print(captureBuffer[i]);
+    Serial.print(" ");
+  }
+  Serial.println("");
+
+
 }
