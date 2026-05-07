@@ -3,7 +3,7 @@
 
 // Constants:
 const int THR = 1000;
-const float CLASSIFICATION_THR = 0.8;
+const float CLASSIFICATION_THR = 0.5;
 
 // Edge Impulse inference struct
 typedef struct {
@@ -22,6 +22,38 @@ static bool debug_nn = false;
 void setup() {
   Serial.begin(9600);
   while (!Serial) yield();
+
+  delay(2000);
+
+  //LoRaWan modem setup
+  pinMode(5, OUTPUT);
+  digitalWrite(5, HIGH);
+
+  Serial1.begin(9600);
+  while (!Serial1) {}
+
+  delay(2000);
+
+  Serial1.println("AT+ID=AppEui,\"0000000000000001\"");
+  delay(1000);
+  Serial1.println("AT+ID=DevEui,\"70B3D57ED0076B25\"");
+  delay(1000);
+  Serial1.println("AT+KEY=AppKey,\"15AC9D90B16A2E62E3F7057BF0ED81F6\"");
+  delay(1000);
+  Serial1.println("AT+MODE=LWOTAA");
+  delay(1000);
+
+  Serial1.write("AT+ADR=OFF");
+  delay(1000);
+  Serial1.write("AT+DR=DR0");
+  delay(1000);
+  Serial1.println("AT+JOIN");
+  delay(5000);
+  while (Serial1.available()) {
+    Serial.write(Serial1.read());
+  }
+
+  Serial.println("LoRaWAN ready.");
 
   Serial.println("Gunshot detector starting...");
   // summary of inferencing settings (from model_metadata.h)
@@ -88,7 +120,7 @@ void loop() {
   // Check for gunshot — adjust index to match your label order
   for (int i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
     if (
-      strcmp(result.classification[i].label, "gunshot") == 0 &&
+      strcmp(result.classification[i].label, "Strel") == 0 &&
       result.classification[i].value > CLASSIFICATION_THR
     ) {
       Serial.println("GUNSHOT DETECTED");
@@ -187,8 +219,37 @@ static void pdm_data_ready_inference_callback(void)
         }
     }
 }
+String buildPayload(ei_impulse_result_t result) {
+    String json = "{";
+
+    for (int i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
+
+        // skrajšani ključi
+        char key = result.classification[i].label[0];
+
+        json += "\"";
+        json += key;
+        json += "\":";
+        json += String(result.classification[i].value, 2);
+
+        if (i < EI_CLASSIFIER_LABEL_COUNT - 1) json += ",";
+    }
+
+    json += "}";
+    return json;
+}
+
 void sendLoRaPayload(uint8_t result) {
-  Serial1.print("AT+SEND=1,1,0");
-  Serial1.write(result);
-  Serial1.println();
+    Serial1.print("AT+MSG=\"");
+    Serial1.print(result);
+    Serial1.println("\"");
+
+    delay(5000);
+
+    while (Serial1.available()) {
+        Serial.write(Serial1.read());
+    }
+
+    Serial.print("Sent to TTN: ");
+    Serial.println(result);
 }
