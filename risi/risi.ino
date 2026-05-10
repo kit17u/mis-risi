@@ -1,9 +1,21 @@
 #include <PDM.h>
 #include <RISI_inferencing.h>
+#include "LSM6DS3.h"
+#include "Wire.h"
+
+LSM6DS3 myIMU(I2C_MODE, 0x6A);
 
 // Constants:
 const int THR = 1000;
 const float CLASSIFICATION_THR = 0.5;
+
+bool trackingMovement = false;
+unsigned long trackingStartTime = 0;
+unsigned long lastPrintTime = 0;
+const unsigned long TRACKING_DURATION = 5 * 60 * 1000; // 5 min
+const unsigned long PRINT_INTERVAL = 30 * 1000; // 30 sec
+bool movementThisMinute = false;
+static float lastAccel = 1.0;
 
 // Edge Impulse inference struct
 typedef struct {
@@ -74,9 +86,52 @@ void setup() {
   // Initialize continuous classifier
   run_classifier_init();
   Serial.println("Listening...");
+
+  if (myIMU.begin() != 0) {
+    Serial.println("IMU error");
+  } else {
+    Serial.println("IMU OK!");
+  }
 }
 
 void loop() {
+
+  // MOVEMENT TRACKING
+  if (trackingMovement) {
+
+    float ax = myIMU.readFloatAccelX();
+    float ay = myIMU.readFloatAccelY();
+    float az = myIMU.readFloatAccelZ();
+
+    float accelMagnitude = sqrt(ax*ax + ay*ay + az*az);
+
+    float diff = abs(accelMagnitude - lastAccel);
+    lastAccel = accelMagnitude;
+
+    if (diff > 0.15) { //tweak this based on lynx movements!
+      movementThisMinute = true;
+    }
+
+    // every 30 seconds print result
+    if (millis() - lastPrintTime > PRINT_INTERVAL) {
+
+      if (movementThisMinute) {
+        Serial.println("30s RESULT: MOVING");
+      } else {
+        Serial.println("30s RESULT: STILL");
+      }
+
+      movementThisMinute = false;
+      lastPrintTime = millis();
+    }
+
+    // stop after 5 minutes
+    if (millis() - trackingStartTime > TRACKING_DURATION) {
+      Serial.println("Tracking finished.");
+      trackingMovement = false;
+    }
+  }
+
   // Wait for a slice to be ready
   if (inference.buf_ready == 0) return;
 
@@ -125,10 +180,16 @@ void loop() {
     ) {
       Serial.println("GUNSHOT DETECTED");
       sendLoRaPayload(1);
+      
+      trackingMovement = true;
+      trackingStartTime = millis();
+      lastPrintTime = millis();
+      movementThisMinute = false;
+
+      Serial.println("Started 5-minute movement tracking...");
       break;
     }
   }
-  
 }
 
 // Called by Edge Impulse to get audio data from the ready buffer
