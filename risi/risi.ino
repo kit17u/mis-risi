@@ -2,20 +2,23 @@
 #include <RISI_inferencing.h>
 #include "LSM6DS3.h"
 #include "Wire.h"
+#include <math.h>
 
 LSM6DS3 myIMU(I2C_MODE, 0x6A);
 
 // Constants:
 const int THR = 1000;
-const float CLASSIFICATION_THR = 0.5;
+const float CLASSIFICATION_THR = 0.3;
 
-bool trackingMovement = false;
 unsigned long trackingStartTime = 0;
 unsigned long lastPrintTime = 0;
 const unsigned long TRACKING_DURATION = 5 * 60 * 1000; // 5 min
 const unsigned long PRINT_INTERVAL = 30 * 1000; // 30 sec
-bool movementThisMinute = false;
-static float lastAccel = 1.0;
+float lastAccel = 0;
+float diffSum = 0.0;
+int diffCount = 0;
+bool gunshotMode = false;
+bool firstIMUSample = true;
 
 // Edge Impulse inference struct
 typedef struct {
@@ -96,8 +99,8 @@ void setup() {
 
 void loop() {
 
-  // MOVEMENT TRACKING
-  if (trackingMovement) {
+  // MOVEMENT TRACKING (average motion intensity over 30 seconds)
+  if (gunshotMode) {
 
     float ax = myIMU.readFloatAccelX();
     float ay = myIMU.readFloatAccelY();
@@ -105,30 +108,53 @@ void loop() {
 
     float accelMagnitude = sqrt(ax*ax + ay*ay + az*az);
 
+    // skip first sample to avoid fake spike
+    if (firstIMUSample) {
+      lastAccel = accelMagnitude;
+      firstIMUSample = false;
+      return;
+    }
+
     float diff = abs(accelMagnitude - lastAccel);
     lastAccel = accelMagnitude;
 
-    if (diff > 0.15) { //tweak this based on lynx movements!
-      movementThisMinute = true;
-    }
+    diffSum += diff;
+    diffCount++;
 
     // every 30 seconds print result
-    if (millis() - lastPrintTime > PRINT_INTERVAL) {
+    if (millis() - lastPrintTime >= PRINT_INTERVAL) {
 
-      if (movementThisMinute) {
-        Serial.println("30s RESULT: MOVING");
-      } else {
-        Serial.println("30s RESULT: STILL");
-      }
+      float meanDiff = (diffCount > 0) ? (diffSum / diffCount) : 0;
 
-      movementThisMinute = false;
+      Serial.print("meanDiff: ");
+      Serial.println(meanDiff, 6);
+
+      uint8_t movementLevel;
+
+      if (meanDiff < 0.005) movementLevel = 0; //still
+      else if (meanDiff < 0.02) movementLevel = 1; //light movement
+      else movementLevel = 2; //active movement
+
+      Serial.print("30s STATE: ");
+      Serial.println(movementLevel);
+
+      sendLoRaPayload(movementLevel);
+
+      // reset window
+      diffSum = 0;
+      diffCount = 0;
+
       lastPrintTime = millis();
     }
 
     // stop after 5 minutes
     if (millis() - trackingStartTime > TRACKING_DURATION) {
       Serial.println("Tracking finished.");
-      trackingMovement = false;
+      gunshotMode = false;
+      firstIMUSample = true;
+      diffSum = 0;
+      diffCount = 0;
+      lastPrintTime = millis();
     }
   }
 
@@ -172,6 +198,22 @@ void loop() {
     Serial.println(result.classification[i].value);
   }
 
+  float strel = 0, rain = 0, thunder = 0, wind = 0;
+
+  for (int i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
+    if (strcmp(result.classification[i].label, "Strel") == 0)
+      strel = result.classification[i].value;
+
+    else if (strcmp(result.classification[i].label, "Rain") == 0)
+      rain = result.classification[i].value;
+
+    else if (strcmp(result.classification[i].label, "Thunder") == 0)
+      thunder = result.classification[i].value;
+
+    else if (strcmp(result.classification[i].label, "Veter") == 0)
+      wind = result.classification[i].value;
+  }
+
   // Check for gunshot — adjust index to match your label order
   for (int i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
     if (
@@ -179,12 +221,30 @@ void loop() {
       result.classification[i].value > CLASSIFICATION_THR
     ) {
       Serial.println("GUNSHOT DETECTED");
-      sendLoRaPayload(1);
+
+      int s = strel * 100;
+      int r = rain * 100;
+      int t = thunder * 100;
+      int w = wind * 100;
       
-      trackingMovement = true;
+      char payload[60];
+
+      snprintf(payload, sizeof(payload),
+        "9,S:%d,R:%d,T:%d,W:%d",
+        s, r, t, w
+      );
+
+      Serial1.print("AT+MSG=\"");
+      Serial1.print(payload);
+      Serial1.println("\"");
+
+      gunshotMode = true;
+      firstIMUSample = true;
+
       trackingStartTime = millis();
       lastPrintTime = millis();
-      movementThisMinute = false;
+      diffSum = 0;
+      diffCount = 0;
 
       Serial.println("Started 5-minute movement tracking...");
       break;
@@ -280,25 +340,6 @@ static void pdm_data_ready_inference_callback(void)
         }
     }
 }
-String buildPayload(ei_impulse_result_t result) {
-    String json = "{";
-
-    for (int i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
-
-        // skrajšani ključi
-        char key = result.classification[i].label[0];
-
-        json += "\"";
-        json += key;
-        json += "\":";
-        json += String(result.classification[i].value, 2);
-
-        if (i < EI_CLASSIFIER_LABEL_COUNT - 1) json += ",";
-    }
-
-    json += "}";
-    return json;
-}
 
 void sendLoRaPayload(uint8_t result) {
     Serial1.print("AT+MSG=\"");
@@ -314,3 +355,4 @@ void sendLoRaPayload(uint8_t result) {
     Serial.print("Sent to TTN: ");
     Serial.println(result);
 }
+
