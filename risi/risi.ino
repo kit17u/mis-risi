@@ -8,7 +8,7 @@ LSM6DS3 myIMU(I2C_MODE, 0x6A);
 
 // Constants:
 const int THR = 1000;
-const float CLASSIFICATION_THR = 0.3;
+const float CLASSIFICATION_THR = 0.5;
 
 unsigned long trackingStartTime = 0;
 unsigned long lastPrintTime = 0;
@@ -138,7 +138,19 @@ void loop() {
       Serial.print("30s STATE: ");
       Serial.println(movementLevel);
 
-      sendLoRaPayload(movementLevel);
+      //sendLoRaPayload(movementLevel);
+      int scaledDiff = (int)(meanDiff * 10000);
+      char payload[30];
+
+      snprintf(payload, sizeof(payload),
+        "%d,%d",
+        movementLevel,
+        scaledDiff
+      );
+
+      Serial1.print("AT+MSG=\"");
+      Serial1.print(payload);
+      Serial1.println("\"");
 
       // reset window
       diffSum = 0;
