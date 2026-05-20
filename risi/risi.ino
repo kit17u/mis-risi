@@ -10,6 +10,8 @@ LSM6DS3 myIMU(I2C_MODE, 0x6A);
 const int THR = 1000;
 const float CLASSIFICATION_THR = 0.5;
 
+const int device_ID = 44;
+
 unsigned long trackingStartTime = 0;
 unsigned long lastPrintTime = 0;
 const unsigned long TRACKING_DURATION = 5 * 60 * 1000; // 5 min
@@ -19,6 +21,10 @@ float diffSum = 0.0;
 int diffCount = 0;
 bool gunshotMode = false;
 bool firstIMUSample = true;
+
+const int collarPin = 1;
+bool collarBroken = false;
+bool lastState = LOW;
 
 // Edge Impulse inference struct
 typedef struct {
@@ -39,6 +45,8 @@ void setup() {
   while (!Serial) yield();
 
   delay(2000);
+
+  pinMode(collarPin, INPUT_PULLUP); // da je default HIGH/broken ker ma svoj resistor 3.3V/5V. LOW/connected
 
   //LoRaWan modem setup
   pinMode(5, OUTPUT);
@@ -99,6 +107,28 @@ void setup() {
 
 void loop() {
 
+  int collarState = digitalRead(collarPin);
+
+  if (collarState != lastState) {
+    lastState = collarState;
+
+    if (collarState == HIGH) {
+        Serial.println("COLLAR BROKEN");
+        Serial1.print("AT+MSG=\"");
+        Serial1.print(device_ID);
+        Serial1.print(",1");
+        Serial1.println("\"");
+    } 
+    else {
+        Serial.println("COLLAR RECONNECTED");
+        Serial1.print("AT+MSG=\"");
+        Serial1.print(device_ID);
+        Serial1.print(",0");
+        Serial1.println("\"");
+    }
+  }
+
+
   // MOVEMENT TRACKING (average motion intensity over 30 seconds)
   if (gunshotMode) {
 
@@ -149,6 +179,8 @@ void loop() {
       );
 
       Serial1.print("AT+MSG=\"");
+      Serial1.print(device_ID);
+      Serial1.print(",");
       Serial1.print(payload);
       Serial1.println("\"");
 
@@ -247,6 +279,8 @@ void loop() {
       );
 
       Serial1.print("AT+MSG=\"");
+      Serial1.print(device_ID);
+      Serial1.print(",");
       Serial1.print(payload);
       Serial1.println("\"");
 
