@@ -10,7 +10,7 @@ LSM6DS3 myIMU(I2C_MODE, 0x6A);
 const int THR = 1000;
 const float CLASSIFICATION_THR = 0.5;
 
-const int device_ID = 44;
+const int device_ID = 1;
 
 unsigned long trackingStartTime = 0;
 unsigned long lastPrintTime = 0;
