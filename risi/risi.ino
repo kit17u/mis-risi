@@ -7,10 +7,10 @@
 LSM6DS3 myIMU(I2C_MODE, 0x6A);
 
 // Constants:
-const int THR = 1000;
+const int THR = 500;
 const float CLASSIFICATION_THR = 0.5;
 
-const int device_ID = 44;
+const int device_ID = 1;
 
 unsigned long trackingStartTime = 0;
 unsigned long lastPrintTime = 0;
@@ -25,6 +25,10 @@ bool firstIMUSample = true;
 const int collarPin = 1;
 bool collarBroken = false;
 bool lastState = LOW;
+
+#define MAX_SAMPLES 13
+int meanDiffArray[MAX_SAMPLES];
+int meanDiffIndex = 0;
 
 // Edge Impulse inference struct
 typedef struct {
@@ -155,34 +159,22 @@ void loop() {
     if (millis() - lastPrintTime >= PRINT_INTERVAL) {
 
       float meanDiff = (diffCount > 0) ? (diffSum / diffCount) : 0;
-
-      Serial.print("meanDiff: ");
-      Serial.println(meanDiff, 6);
-
-      uint8_t movementLevel;
-
-      if (meanDiff < 0.005) movementLevel = 0; //still
-      else if (meanDiff < 0.02) movementLevel = 1; //light movement
-      else movementLevel = 2; //active movement
-
-      Serial.print("30s STATE: ");
-      Serial.println(movementLevel);
-
-      //sendLoRaPayload(movementLevel);
       int scaledDiff = (int)(meanDiff * 10000);
-      char payload[30];
 
-      snprintf(payload, sizeof(payload),
-        "%d,%d",
-        movementLevel,
-        scaledDiff
-      );
+      if (meanDiffIndex < MAX_SAMPLES) {
+        meanDiffArray[meanDiffIndex++] = scaledDiff;
+      }
 
-      Serial1.print("AT+MSG=\"");
-      Serial1.print(device_ID);
-      Serial1.print(",");
-      Serial1.print(payload);
-      Serial1.println("\"");
+       // PRINT FOR DEBUG
+      Serial.print("30s meanDiff = ");
+      Serial.print(meanDiff, 6);
+      Serial.print(" | scaled = ");
+      Serial.println(scaledDiff);
+
+      Serial.print("Stored index ");
+      Serial.print(meanDiffIndex - 1);
+      Serial.print(": ");
+      Serial.println(meanDiffArray[meanDiffIndex - 1]);
 
       // reset window
       diffSum = 0;
@@ -191,13 +183,44 @@ void loop() {
       lastPrintTime = millis();
     }
 
-    // stop after 5 minutes
+    // stop after 5 minutes and send all data
     if (millis() - trackingStartTime > TRACKING_DURATION) {
       Serial.println("Tracking finished.");
+
+      if (diffCount > 0 && meanDiffIndex < MAX_SAMPLES) {
+        float meanDiff = diffSum / diffCount;
+        int scaledDiff = (int)(meanDiff * 10000);
+
+        meanDiffArray[meanDiffIndex++] = scaledDiff;
+
+        Serial.print("FINAL meanDiff = ");
+        Serial.print(meanDiff, 6);
+        Serial.print(" | scaled = ");
+        Serial.println(scaledDiff);
+      }
+
+      char payload[80];
+      int len = 0;
+
+      // start with device ID
+      len += snprintf(payload + len, sizeof(payload) - len, "%d", device_ID);
+
+      // append all values
+      for (int i = 0; i < meanDiffIndex; i++) {
+        len += snprintf(payload + len, sizeof(payload) - len, ",%d", meanDiffArray[i]);
+      }
+
+      Serial1.print("AT+MSG=\"");
+      Serial1.print(payload);
+      Serial1.println("\"");
+
+      // RESET
+      meanDiffIndex = 0;
       gunshotMode = false;
       firstIMUSample = true;
       diffSum = 0;
       diffCount = 0;
+
       lastPrintTime = millis();
     }
   }
@@ -274,7 +297,7 @@ void loop() {
       char payload[60];
 
       snprintf(payload, sizeof(payload),
-        "9,S:%d,R:%d,T:%d,W:%d",
+        "2,%d,%d,%d,%d",
         s, r, t, w
       );
 
