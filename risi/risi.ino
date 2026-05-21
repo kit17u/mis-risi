@@ -7,8 +7,8 @@
 LSM6DS3 myIMU(I2C_MODE, 0x6A);
 
 // Constants:
-const int THR = 1000;
-const float CLASSIFICATION_THR = 0.5;
+const int THR = 500;
+const float CLASSIFICATION_THR = 0.2;
 
 const int device_ID = 1;
 
@@ -274,7 +274,7 @@ void loop() {
       char payload[60];
 
       snprintf(payload, sizeof(payload),
-        "9,S:%d,R:%d,T:%d,W:%d",
+        "2,%d,%d,%d,%d",
         s, r, t, w
       );
 
